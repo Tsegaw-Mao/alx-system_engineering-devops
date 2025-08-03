@@ -1,2 +1,2 @@
 #!/bin/bash
-echo $(( $(echo "ibase=$water; $WATER" | tr a-z A-Z | bc) + $(echo "ibase=$stir; $STIR" | tr a-z A-Z | bc) )) | xargs -I{} echo "obase=$bestchol; {}" | bc
+echo $(($WATER ))
