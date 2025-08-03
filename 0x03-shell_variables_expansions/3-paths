@@ -1,2 +1,2 @@
 #!/bin/bash
-printf "%02d\n" "$(echo "$PATH" | tr ':' '\n' | grep -c .)"
+printf "%02d\n" "$(echo "$PATH" | tr ':' '\n' | wc -l)"
