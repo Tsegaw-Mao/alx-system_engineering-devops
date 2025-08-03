@@ -1,0 +1,2 @@
+#!/bin/bash
+echo "ibase=$water; obase=$bestchol; $(echo "$WATER" | tr '[:lower:]' '[:upper:]') + $(echo "$STIR" | tr '[:lower:]' '[:upper:]')" | bc

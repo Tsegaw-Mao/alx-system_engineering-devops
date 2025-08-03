@@ -26,3 +26,38 @@ Converts the binary number stored in the environment variable `BINARY` to its de
 Prints all two-letter combinations from a to z, excluding "oo", in alphabetical order.
 ### 13-print_float
 Prints the value of the environment variable `NUM` formatted with two decimal places.
+### 14-decimal_to_hexadecimal
+This script converts a number from base 10 to base 16 (hexadecimal). The input number is expected to be stored in the environment variable DECIMAL.
+### `15-rot13`
+
+**Description:**
+This script encodes or decodes text using the ROT13 cipher. It reads input from standard input and outputs the transformed text.
+
+**Usage Example:**
+```bash
+echo "Hello" | ./15-rot13
+# Output: Uryyb
+
+### `16-odd`
+
+**Description:**
+This script prints every other line from input, starting with the first (i.e., lines 1, 3, 5, ...).
+
+**Usage Example:**
+```bash
+cat file.txt | ./16-odd
+
+### `17-water_and_stir`
+
+**Description:**
+This script adds two numbers stored in the environment variables `WATER` and `STIR`, interpreting them from custom bases (`$water` and `$stir`), and prints the result in base `$bestchol`.
+
+**Usage Example:**
+```bash
+export WATER=A1
+export STIR=11
+export water=16
+export stir=10
+export bestchol=16
+./17-water_and_stir
+# Output: B2
