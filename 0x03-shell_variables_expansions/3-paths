@@ -1,2 +1,2 @@
 #!/bin/bash
-PATH=/home/julien/bin:/home/julien/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:::::/hello printf "%d chars long\n" "$(echo "$PATH" | tr ':' '\n' | grep -c .)"
+printf "%d\n" "$(echo "$PATH" | tr ':' '\n' | grep -c .)"
