@@ -1,0 +1,193 @@
+# Secure three-server web infrastructure — whiteboard: [www.foobar.com](http://www.foobar.com)
+
+This document shows a secure, monitored three-server architecture that serves **[www.foobar.com](http://www.foobar.com)** over HTTPS. It includes three firewalls, an SSL certificate, and three monitoring clients (one per server).
+
+---
+
+## 1) User story (start)
+
+A user opens their browser, types **`www.foobar.com`**, and presses Enter.
+
+**High level flow:**
+
+1. DNS resolves `www.foobar.com` to the public IP of the load balancer (HAProxy).
+2. The browser negotiates TLS (HTTPS) with HAProxy using the SSL certificate for `www.foobar.com`.
+3. HAProxy terminates TLS (optionally re-encrypts to backends) and forwards the request to the web/app server pool.
+4. The web/app server (Nginx + application process) serves static content or executes application logic and queries the MySQL database on the DB server.
+5. The DB server (Primary MySQL) responds; Replica(s) replicate changes for reads/backups.
+6. Monitoring agents on each server collect metrics and logs and send them to the centralized monitoring service.
+
+---
+
+## 2) Visual (ASCII whiteboard)
+
+```
+                    Internet
+                      |
+                 (DNS -> LB IP)
+                      |
+             +---------------------+
+             |  Edge Firewall (FW1) |   <- perimeter firewall
+             +---------------------+
+                      |
+            +-----------------------+
+            |   HAProxy Load Balancer|   (SSL cert: www.foobar.com)
+            |   + Monitoring Client  |   (Collector 1 -> SumoLogic)
+            +-----------------------+
+                      |
+           +----------+----------+
+           |                     |
+  +----------------+     +----------------+
+  | Host FW (FW2)  |     | Host FW (FW3)  |    <- host-based firewalls
+  | Web/App Server |     | MySQL DB Server |
+  | Nginx + App    |     | MySQL Primary   |
+  | Monitoring C2  |     | Monitoring C3   |
+  +----------------+     +----------------+
+           |                      |
+           |                      +--> Replica(s) (async/semi-sync replication)
+           +--> /var/www/foobar
+                 (app files)
+```
+
+**Servers (3 total):**
+
+* Server 1: HAProxy Load Balancer (public-facing).
+* Server 2: Web + Application server (Nginx + app runtime; serves app files).
+* Server 3: MySQL Database server (Primary; replicates to replicas if added).
+
+**Security layers (3 firewalls):**
+
+* FW1: Edge/perimeter firewall in front of LB (restricts public ports: 80/443 only).
+* FW2: Host firewall on Web/App server (allow from LB IP only, allow SSH from trusted admin IPs).
+* FW3: Host firewall on DB server (allow DB port only from Web/App and LB IPs; block public access).
+
+**Monitoring clients (3):** one collector/agent on each server, sending logs/metrics/traces to a central service (e.g., Sumo Logic, Datadog, Prometheus pushgateway + remote storage).
+
+---
+
+## 3) Additional elements and why they were added
+
+* **Second and third firewalls (FW2, FW3):** protect servers at the host level and limit lateral movement if the perimeter is breached.
+* **SSL certificate for `www.foobar.com`:** encrypts traffic in transit, prevents eavesdropping and tampering.
+* **Monitoring clients (3 collectors):** ensure each server emits metrics (CPU, memory, disk), logs (Nginx access/error, app logs, MySQL slow queries) and traces so you can detect problems quickly.
+
+---
+
+## 4) What are firewalls for?
+
+Firewalls control network traffic by allowing or denying packets based on rules. They are used to:
+
+* Allow only necessary ports (e.g., 80/443 to LB, 3306 to DB from trusted hosts).
+* Restrict administrative access (SSH) to fixed IPs or VPN.
+* Reduce attack surface and limit lateral movement after a breach.
+
+We use three: a perimeter firewall (edge) and host-based firewalls on the web/app and DB servers.
+
+---
+
+## 5) Why is traffic served over HTTPS?
+
+* **Confidentiality:** Prevents eavesdroppers from reading data.
+* **Integrity:** Prevents tampering of requests/responses in transit.
+* **Authentication:** The SSL certificate proves to the client that it is talking to `www.foobar.com`.
+* **Browser features & SEO:** Modern browsers expect HTTPS; some APIs (geolocation, service workers) require it, and search engines favor HTTPS sites.
+
+---
+
+## 6) What monitoring is used for and how it collects data
+
+**Purpose of monitoring:**
+
+* Detect outages and performance regressions (e.g., high latency, error rates).
+* Alert on abnormal resource usage (CPU, memory, disk I/O).
+* Observe traffic patterns (QPS, response times), application errors, slow DB queries.
+* Provide historical context and dashboards for troubleshooting.
+
+**How data is collected:**
+
+* **Metrics agent** (SumoLogic Collector, Datadog Agent, Prometheus node\_exporter): collects OS-level metrics and sends them to the monitoring backend (push) or exposes them for scraping (pull).
+* **Application & server logs**: a log forwarder (fluentd, Filebeat, Sumo collector) tails log files (Nginx access/error, app logs, MySQL logs) and forwards them over TLS to the central collector.
+* **Tracing**: instrument application code with distributed tracing (e.g., OpenTelemetry) and export traces to the observability backend.
+* **Exporters**: e.g., Nginx stub\_status or Prometheus exporter provides QPS/connection metrics. App can expose `/metrics` endpoint.
+
+Agents typically use an outbound TLS connection to the vendor's ingestion endpoint, authenticated by an access key or certificate.
+
+---
+
+## 7) How to monitor your web server QPS (queries per second)
+
+Options:
+
+1. **Nginx access logs + log forwarding**: parse the access log in the monitoring system and compute requests/sec per time window.
+2. **Nginx stub\_status**: enable `stub_status` or `status` module and poll it (or use an exporter) to get active connections, accepts, handled and requests counters; compute QPS from deltas.
+3. **Prometheus + exporter**: run an exporter that scrapes Nginx or app `/metrics` endpoint and queries `rate(nginx_requests_total[1m])` for QPS. Display as a dashboard and set alerts for thresholds.
+4. **Application metrics**: instrument the app to increment a counter for each request and expose it for scraping (preferred for per-route QPS).
+
+**Recommended:** use both access log analysis and a metrics endpoint (Prometheus) for accuracy and ease of alerting.
+
+---
+
+## 8) Why terminating SSL at the load balancer level is an issue
+
+**Pros of LB TLS termination:** simpler certificate management and lower CPU load on backends; LB can do advanced TLS features.
+
+**Cons / issues:**
+
+* **Plaintext between LB and backends**: if TLS is terminated at LB and connections to backends are unencrypted, anyone with network access between LB and backends could sniff traffic. In public-cloud or multi-tenant networks this is bad.
+* **Private key exposure**: the LB stores the private key. If LB is compromised, the key is at risk. Key management must be strict.
+* **Layered security lost**: end-to-end encryption gives defense-in-depth; stopping TLS at LB reduces it.
+
+**Mitigation:** terminate TLS at LB **and** re-encrypt to backends using backend certificates (mutual TLS if needed), or use an internal TLS tunnel (TLS between LB and backends). Keep private keys in a secure store (KMS, HashiCorp Vault).
+
+---
+
+## 9) Why having only one MySQL server capable of accepting writes is an issue
+
+* **Write SPOF**: If the primary fails, applications that need to write cannot function until failover completes.
+* **Failover complexity**: Promoting a replica to primary requires orchestration and careful handling of replication lag and transactions.
+* **Scaling limits**: All writes go to one machine — it becomes a bottleneck.
+
+**Mitigations:**
+
+* Implement automated failover (orchestration tools like MHA, Orchestrator, or use managed DB with automated failover).
+* Use semi-synchronous or synchronous replication (trade-offs exist) or adopt multi-master clusters (Galera, Vitess) where appropriate.
+
+---
+
+## 10) Why having servers with all the same components (database, web, and app) might be a problem
+
+Running identical full stacks on every server (web + app + DB on each) is called a homogeneous or "everything-on-every-node" approach.
+**Problems:**
+
+* **Resource contention**: DB I/O or backups can starve web/app processes of CPU and disk.
+* **Complexity for scaling**: scaling one layer (e.g., database) requires replicating all components or altering server roles.
+* **Security surface**: an attacker who compromises one server gains access to all layers (app code and DB).
+* **Operational overhead**: patching/upgrading becomes riskier — each server has multiple responsibilities.
+
+**Recommended practice:** separate roles (LB, web/app, DB) so each server is optimized for its function and can be scaled independently.
+
+---
+
+## 11) Remaining SPOFs and other issues
+
+* **Single Load Balancer**: LB is a SPOF; add a second LB (active-passive or anycast) or use cloud-managed LB.
+* **Single DB Primary**: primary is a SPOF for writes — add automated failover and replicas.
+* **No monitoring alerts configured**: we included agents, but you must configure alerts and runbooks.
+* **No WAF**: consider a Web Application Firewall (ModSecurity, cloud WAF) to protect from OWASP threats.
+
+---
+
+## 12) Quick checklist to implement this setup
+
+1. Provision three servers (HAProxy, Web/App, DB) with private network connectivity.
+2. Configure FW1 to only allow 80/443 from the public internet and SSH from admin IPs.
+3. Install HAProxy, place SSL cert (use ACME/Let’s Encrypt certs) and enable TLS to backends.
+4. Install host firewalls (ufw/iptables) on Web/App and DB to restrict traffic.
+5. Install Nginx and your application on the Web/App server; deploy app files to `/var/www/foobar`.
+6. Install MySQL on DB server (Primary), configure replication user and setup Replica(s) later.
+7. Install monitoring agents (Sumo Logic Collector / Datadog Agent / Prometheus exporters) on all three servers and verify data ingestion.
+8. Enable Nginx `stub_status` or expose `/metrics` from the app for QPS monitoring.
+9. Set up dashboards and alerts (e.g., high 5m avg QPS + error rate > 1%).
+10. Automate backups and test failover procedures.
+
+---
