@@ -1,0 +1,155 @@
+# One-server web infrastructure — whiteboard: [www.foobar.com](http://www.foobar.com)
+
+Below is a simple whiteboard-style design and an explanation that follows a user trying to access the site.
+
+---
+
+## 1) User story (start)
+
+A user opens their browser and types **`www.foobar.com`** and presses Enter.
+
+**What happens next (high level):**
+
+1. The browser asks a DNS resolver for the IP address of `www.foobar.com`.
+2. DNS returns the IP `8.8.8.8` (the `www` record is configured as an A record pointing to this IP).
+3. The browser opens a TCP connection to `8.8.8.8` on port **80 (HTTP)** or **443 (HTTPS)**.
+4. The incoming connection reaches the single **server** (the physical/virtual machine at IP `8.8.8.8`).
+5. **Nginx** (the web server) receives the HTTP(S) request.
+6. Nginx serves static files directly if requested, or forwards (reverse-proxies) dynamic requests to the **application server** (e.g. Gunicorn, Node/PM2, or PHP-FPM).
+7. The **application server** executes the app code from the application files (`/var/www/foobar`), which may in turn query the **MySQL** database for data.
+8. MySQL returns results; the application renders HTML/JSON and sends it back to Nginx.
+9. Nginx returns the final HTTP response to the user's browser. The browser renders the page.
+
+---
+
+## 2) Visual (ASCII whiteboard)
+
+```
++------------------+                      +----------------+
+|  User browser    |  <--Internet-->      |  DNS resolver  |
+| (www.foobar.com) |                      +----------------+
++------------------+                               |
+       |  HTTP/HTTPS                                   |  resolves www.foobar.com -> 8.8.8.8
+       v                                              v
+  +----------------------------------------------+   (A record)
+  | Single Server (public IP: 8.8.8.8)           |
+  |                                              |
+  |  +------------+    +----------------------+  |
+  |  |  Nginx     |<-->|  App server (e.g.    |  |
+  |  |  (web/proxy)|    |  Gunicorn/Node/PHP-FPM)|  |
+  |  +------------+    +----------------------+  |
+  |         |                  |                  |
+  |         | static files      | reads app files   |
+  |         v                  v                  v
+  |    /var/www/foobar      /var/www/foobar   +---------+
+  | (application files)   (app code executed) | MySQL   |
+  |                                         +-| (localhost)|
+  +-----------------------------------------+ +---------+
+```
+
+Notes: Nginx listens on ports 80/443 and acts as a reverse proxy and TLS terminator. MySQL is typically bound to `127.0.0.1` (localhost) for security so only the local server can access it.
+
+---
+
+## 3) Required components (how they map to your list)
+
+* **1 server**: A single physical or virtual machine with public IPv4 `8.8.8.8`.
+* **1 web server (Nginx)**: Handles incoming HTTP(S), TLS termination, static files, reverse proxy to app server.
+* **1 application server**: Runs the application runtime/processes (examples: Gunicorn for Python, Node with PM2, or PHP-FPM for PHP). It executes the app code and generates dynamic responses.
+* **1 application files (your code base)**: The website codebase, e.g. `/var/www/foobar` containing HTML templates, JS, CSS, server-side code, config files.
+* **1 database (MySQL)**: Stores persistent data (users, posts, sessions, etc.).
+* **1 domain name**: `foobar.com` with `www` record pointing to `8.8.8.8`.
+
+---
+
+## 4) Specific explanations (required)
+
+### What is a **server**?
+
+A server is a machine (physical hardware or virtual machine) that runs services and listens for incoming network requests. In this setup the server hosts Nginx, the application server, the application files, and MySQL.
+
+### What is the role of the **domain name**?
+
+A domain name (foobar.com) is a human-friendly identifier that maps to an IP address via DNS. Instead of remembering `8.8.8.8`, users type `www.foobar.com`. DNS resolves `www.foobar.com` to the server IP so the browser can connect.
+
+### What type of DNS record is `www` in `www.foobar.com`?
+
+It is an **A record** (Address record) that maps the hostname `www.foobar.com` to the IPv4 address `8.8.8.8`.
+(If `www.foobar.com` pointed to another hostname it would be a CNAME, but since it points directly to an IP, it is an A record.)
+
+### What is the role of the **web server (Nginx)**?
+
+* Accepts incoming HTTP/HTTPS connections from clients.
+* Performs TLS termination (if HTTPS is used).
+* Serves static assets (images, CSS, JS) directly from disk.
+* Acts as a reverse proxy: forwards dynamic requests to the application server and returns responses to clients.
+* Handles connection management, buffering, caching headers, gzip compression, request timeouts, and basic rate-limiting.
+
+### What is the role of the **application server**?
+
+* Runs the application runtime and executes the web application code.
+* Receives proxied requests from Nginx on a local port or unix socket, performs business logic, queries the database, and returns generated content.
+* Often managed by a process manager (systemd, supervisord, pm2) so the process restarts if it crashes.
+
+### What is the role of the **database (MySQL)**?
+
+* Stores and returns persistent data (users, posts, comments, settings).
+* The application server issues SQL queries to MySQL and gets results to build responses.
+* For security on a single-server setup, MySQL often listens only on `localhost` so external hosts cannot connect.
+
+### How does the server communicate with the user's computer?
+
+* Over the Internet using the **TCP/IP** stack. The browser opens a TCP connection to the server IP on port **80** (HTTP) or **443** (HTTPS).
+* Application-layer protocol is **HTTP/1.1**, **HTTP/2**, or **HTTP/3** depending on configuration.
+* If HTTPS is used, TLS encrypts the HTTP traffic so the exchange is secure.
+
+---
+
+## 5) Known problems / limitations with this one-server setup (required)
+
+1. **Single Point Of Failure (SPOF)**:
+
+   * Everything (web server, app, database) runs on one machine. If the machine fails (hardware failure, kernel panic, cloud host outage), the whole site is down.
+
+2. **Downtime for maintenance or deploys**:
+
+   * Deploying new code may require restarting the application server or even Nginx configuration reloads. Without careful deployment strategies this causes user-visible downtime.
+
+3. **Cannot scale with traffic**:
+
+   * The single server has finite CPU, RAM, disk I/O, and network bandwidth. If traffic spikes beyond capacity, the site slows or becomes unavailable.
+
+4. **Resource contention**:
+
+   * The web server, app processes, and MySQL compete for CPU, memory, and disk — noisy processes (e.g., heavy DB queries or backups) can degrade the whole site.
+
+5. **Security risk concentration**:
+
+   * A successful compromise of the server gives an attacker access to app files and the database because everything is colocated.
+
+6. **Backups & upgrades are risky**:
+
+   * Backing up live DB or upgrading MySQL may cause performance degradation and possible downtime unless carefully scheduled.
+
+---
+
+## 6) Short suggestions to mitigate (non-exhaustive)
+
+* Use process manager + zero-downtime deployment patterns (e.g., socket-based reloads, blue-green deploys) to reduce downtime.
+* Offload static files to a CDN (even from a single server) to reduce bandwidth and latency.
+* Run database backups and replication where possible (but that requires more than one server if you want HA).
+* Monitor server health (CPU, memory, disk, network) and set alerts.
+* Harden the server (firewall, fail2ban, least privilege, MySQL bound to localhost, secure SSH keys).
+
+---
+
+## 7) Example file/port layout (practical details)
+
+* Public IP: **8.8.8.8**
+* Nginx config: `/etc/nginx/sites-available/www.foobar.com` (enabled via `sites-enabled`)
+* App files: `/var/www/foobar/`
+* App server socket: `unix:/run/foobar-app.sock` or `127.0.0.1:8000`
+* MySQL socket: `/var/run/mysqld/mysqld.sock` (or `127.0.0.1:3306`)
+* Ports open in firewall: `22` (SSH, restricted), `80` (HTTP), `443` (HTTPS)
+
+---
