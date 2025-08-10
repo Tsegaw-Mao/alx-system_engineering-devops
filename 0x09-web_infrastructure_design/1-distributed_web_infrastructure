@@ -1,0 +1,92 @@
+# Three-server web infrastructure — whiteboard: [www.foobar.com](http://www.foobar.com)
+
+---
+
+## 1) User story (start)
+
+A user opens their browser, types **`www.foobar.com`**, and presses Enter.
+
+1. DNS resolves `www.foobar.com` to the load balancer’s public IP.
+2. Browser connects via HTTP/HTTPS to the **HAProxy** load balancer.
+3. HAProxy distributes the request to one of two backend servers: the **Web Server (Nginx)** or the **Application Server**.
+4. The web server handles static files or proxies to the application server.
+5. The application server executes the code base and queries the **MySQL database**.
+6. The database cluster returns data, which flows back to the load balancer and then to the user.
+
+---
+
+## 2) Visual (ASCII whiteboard)
+
+```
++--------------+           +----------------+          +-----------------+
+|  User        |<--DNS-->  |  DNS Resolver  |          | www.foobar.com  |
++--------------+           +----------------+                 |
+        | HTTP/HTTPS resolves to LB IP                           v
+        +------------------> [ HAProxy Load Balancer ]
+                                    |
+               +--------------------+--------------------+
+               |                                         |
+        [Web Server: Nginx]                        [App Server]
+               |                                         |
+        Static files / Reverse proxy          Executes code base
+               |                                         |
+               +--------------------+--------------------+
+                                    |
+                              [MySQL DB Cluster]
+                         Primary <-----> Replica
+```
+
+---
+
+## 3) Why each additional element was added
+
+* **Second server (App Server)**: Separates web serving from application logic, preventing one process from consuming all resources.
+* **Third server (Load Balancer)**: Distributes traffic, increases redundancy, and provides a single public entry point.
+* **HAProxy**: Balances load between web and app servers using a chosen algorithm.
+* **Primary-Replica Database**: Improves read performance and provides redundancy.
+
+---
+
+## 4) Load balancer algorithm
+
+**Round Robin**: HAProxy sends each incoming request to the next server in sequence. This evenly distributes traffic across servers without considering load.
+
+---
+
+## 5) Active-Active vs Active-Passive
+
+* **Active-Active**: All backend servers handle traffic simultaneously.
+* **Active-Passive**: Only one handles traffic while the other remains on standby, activated on failure.
+  **Our setup**: Active-Active for the web/app servers to maximize resource usage.
+
+---
+
+## 6) Database Primary-Replica (Master-Slave) cluster
+
+* **Primary**: Handles all writes and updates. Replicates changes to the replica.
+* **Replica**: Handles read-only queries. Updates come from the primary via replication.
+  **For the application**: Write requests go to the primary; read requests can be served from the replica.
+
+---
+
+## 7) Issues with this infrastructure
+
+1. **SPOF**:
+
+   * The load balancer itself is a single point of failure.
+   * The primary database is also a SPOF for writes.
+2. **Security**:
+
+   * No firewall, no HTTPS encryption leaves data vulnerable.
+3. **No monitoring**:
+
+   * Failures or slow performance may go unnoticed without a monitoring system.
+
+---
+
+## 8) Recommendations
+
+* Add a second load balancer in Active-Passive mode.
+* Enforce HTTPS with TLS certificates.
+* Deploy a firewall to restrict access.
+* Implement monitoring tools like Prometheus or Datadog.
