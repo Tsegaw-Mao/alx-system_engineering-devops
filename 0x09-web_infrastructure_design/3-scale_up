@@ -1,0 +1,64 @@
+Whiteboard Design: www.foobar.com (4 Servers)
+Components:
+
+Load-Balancer 1 (HAProxy)
+
+Load-Balancer 2 (HAProxy) – clustered with LB1 for redundancy.
+
+Web Server – runs Nginx to serve static content and reverse-proxy requests to the application server.
+
+Application Server – runs your backend code (e.g., Python/Django, Node.js, PHP).
+
+Database Server – MySQL (Primary).
+
+Diagram (text form)
+```
+[ Users ]
+    |
+  Internet
+    |
+  [DNS]
+    |
+  ┌───────────────┐      ┌───────────────┐
+  │ HAProxy (LB1) │ <--> │ HAProxy (LB2) │   <-- Cluster (VRRP/Keepalived)
+  └───────▲───────┘      └───────▲───────┘
+          |                         |
+          └─────────────┬──────────┘
+                        |
+                ┌───────┴───────┐
+                │   Nginx Web   │ (Web Server)
+                └───────▲───────┘
+                        |
+                ┌───────┴───────┐
+                │ Application   │ (App Server)
+                └───────▲───────┘
+                        |
+                ┌───────┴───────┐
+                │  MySQL DB     │ (Database Server)
+                └───────────────┘
+```
+Why each additional element is added
+Extra Load Balancer (HAProxy) in a Cluster
+
+Why: Prevent a single point of failure (SPOF) at the load-balancer layer.
+
+How: Using VRRP (via Keepalived) or HAProxy native clustering so that if LB1 fails, LB2 takes over the virtual IP instantly.
+
+Dedicated Web Server
+
+Why: Separating static content serving and request routing from backend processing improves performance and security.
+
+Role: Nginx handles static files (images, CSS, JS) and proxies API requests to the application server.
+
+Dedicated Application Server
+
+Why: Isolates backend logic from the web server to allow independent scaling and security hardening.
+
+Role: Executes dynamic application logic, interacts with the database, and returns responses to Nginx.
+
+Dedicated Database Server
+
+Why: Keeps data storage secure and optimized, allows separate tuning for database performance without affecting app or web layers.
+
+Role: Stores persistent data for the application, accessible only from the application server’s internal network.
+
